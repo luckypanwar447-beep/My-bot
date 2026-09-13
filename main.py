@@ -17,6 +17,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 
 # Logging configuration
 logging.basicConfig(
@@ -34,22 +36,12 @@ def ensure_dependencies():
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright"])
     
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
-    
-    # Check Tesseract binary
-    try:
-        subprocess.run(["tesseract", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        logging.info("Installing Tesseract OCR on system...")
-        subprocess.run(["apt-get", "update", "-y"], check=False)
-        subprocess.run(["apt-get", "install", "-y", "tesseract-ocr"], check=False)
 
 ensure_dependencies()
 
-from playwright.async_api import async_playwright
-
-# Render HTTP Port Dummy Server (Health Check Pass Karwane Ke Liye)
+# Render Health Check Server
 async def handle_dummy_request(request):
-    return web.Response(text="Bot is Live and Running!")
+    return web.Response(text="Bot is Live")
 
 async def start_dummy_server():
     app = web.Application()
@@ -59,22 +51,20 @@ async def start_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"Dummy Web Server running on port {port}")
 
-# OCR Function for Captcha Auto-Bypass
+# Captcha Solver Logic
 def solve_captcha_image(image_path: str) -> str:
     try:
-        img = Image.open(image_path).convert('L') # Convert to Grayscale
+        img = Image.open(image_path).convert('L')
         text = pytesseract.image_to_string(img, config='--psm 6')
-        clean_text = re.sub(r'[^a-zA-Z0-9]', '', text)
-        return clean_text
+        return re.sub(r'[^a-zA-Z0-9]', '', text)
     except Exception as e:
         logging.error(f"OCR Error: {e}")
         return ""
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "Namaste! Kripya apna 12-digit UIDAI Reference ID ya Registered Phone Number enter karein:"
+        "Namaste! Kripya apna 12-digit Aadhaar Number ya Reference ID enter karein:"
     )
     return IDENTITY_INPUT
 
@@ -82,44 +72,61 @@ async def process_identity(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     input_text = update.message.text.strip()
     
     if not input_text.isdigit() or len(input_text) not in [10, 12]:
-        await update.message.reply_text("Galat Input! Valid 10-digit Phone Number ya 12-digit Reference Number daalein.")
+        await update.message.reply_text("Galat Input! Valid 12-digit Aadhaar ya 10-digit Phone Number daalein.")
         return IDENTITY_INPUT
 
     context.user_data['identity'] = input_text
-    await update.message.reply_text("Portal load ho raha hai... Anti-bot headers inject aur Captcha Auto-Solve ho raha hai...")
+    await update.message.reply_text("Bypassing Anti-Bot Protection... Portal load ho raha hai...")
 
     try:
         pw = await async_playwright().start()
         
-        # Real Browser User-Agent and Headers Bypass Setup
+        # High Stealth Browser Options
         browser = await pw.chromium.launch(
             headless=True,
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled'
+                '--disable-infobars',
+                '--window-size=1920,1080',
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
             ]
         )
         
         context_browser = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={'width': 1366, 'height': 768},
+            viewport={'width': 1920, 'height': 1080},
+            locale="en-US,en",
+            timezone_id="Asia/Kolkata",
             extra_http_headers={
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Connection': 'keep-alive'
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
             }
         )
 
         page = await context_browser.new_page()
         
-        # Automation Detection Remove Script
-        await page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        # Apply Playwright Stealth Evasion
+        await stealth_async(page)
         
-        await page.goto(MY_AADHAAR_URL, wait_until="networkidle")
-        await page.wait_for_selector("//img[@alt='Captcha']", timeout=20000)
+        # Increased Timeout to 60 Seconds
+        page.set_default_timeout(60000)
+        
+        await page.goto(MY_AADHAAR_URL, wait_until="domcontentloaded")
+        await page.wait_for_selector("//img[@alt='Captcha']", timeout=60000)
 
-        # Captcha Save & Auto OCR Solve
+        # Captcha Save & Solve
         captcha_path = f"captcha_{update.effective_user.id}.png"
         captcha_element = page.locator("//img[@alt='Captcha']")
         await captcha_element.screenshot(path=captcha_path)
@@ -132,7 +139,7 @@ async def process_identity(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if extracted_captcha:
             await page.fill("input[name='captcha']", extracted_captcha)
         
-        # Click Send OTP Button
+        # Trigger Send OTP
         await page.click("//button[contains(text(), 'Send OTP')]")
         
         context.user_data['pw'] = pw
@@ -141,12 +148,12 @@ async def process_identity(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['captcha_file'] = captcha_path
         
         await update.message.reply_text(
-            f"Captcha Auto-Bypassed ({extracted_captcha})!\n\nOTP send request submit kar di gayi hai. Multi-Factor OTP yahan enter karein:"
+            f"Captcha Solved: [{extracted_captcha}]\n\nOTP Request Submit kar di gayi hai. Registered mobile par aaya OTP enter karein:"
         )
         return OTP_INPUT
 
     except Exception as e:
-        await update.message.reply_text(f"Error: Session Load Failed. Details: {str(e)}")
+        await update.message.reply_text(f"Error: {str(e)}")
         await cleanup_session(context)
         return ConversationHandler.END
 
@@ -157,9 +164,9 @@ async def process_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     try:
         await page.fill("input[name='otp']", otp_text)
         await page.click("//button[contains(text(), 'Verify & Download')]")
-        await update.message.reply_text("Verification process Complete ho raha hai...")
+        await update.message.reply_text("OTP submit kar diya gaya hai. File process ho rahi hai...")
     except Exception as e:
-        await update.message.reply_text(f"OTP submit failure: {str(e)}")
+        await update.message.reply_text(f"Failed: {str(e)}")
     finally:
         await cleanup_session(context)
 
@@ -186,7 +193,7 @@ def main():
     bot_token = os.getenv("BOT_TOKEN")
     
     if not bot_token:
-        print("ERROR: BOT_TOKEN environment variable is missing!")
+        print("ERROR: BOT_TOKEN environment variable missing!")
         return
 
     loop = asyncio.get_event_loop()
