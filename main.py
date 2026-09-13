@@ -1,6 +1,7 @@
 import os
+import sys
+import subprocess
 import logging
-from playwright.async_api import async_playwright
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -19,6 +20,22 @@ logging.basicConfig(
 
 IDENTITY_INPUT, CAPTCHA_INPUT, OTP_INPUT = range(3)
 MY_AADHAAR_URL = "https://myaadhaar.uidai.gov.in/genricDownloadAadhaar"
+
+# Auto-installer function for Playwright Chromium
+def ensure_chromium_installed():
+    try:
+        from playwright.async_api import async_playwright
+        logging.info("Checking Chromium binaries...")
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright"])
+    
+    # Force install chromium binaries if not found
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
+
+# Run auto-installer at startup
+ensure_chromium_installed()
+
+from playwright.async_api import async_playwright
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
@@ -44,7 +61,6 @@ async def process_identity(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await page.goto(MY_AADHAAR_URL)
         await page.wait_for_selector("//img[@alt='Captcha']", timeout=15000)
 
-        # Captcha Screenshot save karein
         captcha_path = f"captcha_{update.effective_user.id}.png"
         captcha_element = page.locator("//img[@alt='Captcha']")
         await captcha_element.screenshot(path=captcha_path)
@@ -60,7 +76,7 @@ async def process_identity(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return CAPTCHA_INPUT
     except Exception as e:
-        await update.message.reply_text(f"Error: Portal load nahi ho sakha. Details: {str(e)}")
+        await update.message.reply_text(f"Error: Details: {str(e)}")
         return ConversationHandler.END
 
 async def process_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -111,7 +127,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 def main():
-    # Environment Variable se Bot Token fetch hoga
     bot_token = os.getenv("BOT_TOKEN")
     
     if not bot_token:
